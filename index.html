@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Yen Lens</title>
+<meta name="theme-color" content="#12151c">
+<meta name="description" content="Point your camera at Japanese price tags and see them in Australian dollars.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+/* Layout: full-screen viewfinder. Camera fills the screen, price stickers float over it,
+   a slim rate bar sits at the top and the controls sit in the thumb zone at the bottom. */
+:root {
+  --ink: #12151c;
+  --panel: #1b202a;
+  --line: #2c3340;
+  --text: #eef0f4;
+  --muted: #98a1b1;
+  --sticker: #ffcf3a;
+  --sticker-ink: #1d1600;
+  --hanko: #e8453c;
+  --font: system-ui, "Roboto", "Noto Sans JP", "Segoe UI", sans-serif;
+  --radius: 14px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #000; color: var(--text); font-family: var(--font); -webkit-tap-highlight-color: transparent; }
+body { overflow: hidden; overscroll-behavior: none; }
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--sticker); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+#video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+#overlay { position: fixed; inset: 0; pointer-events: none; }
+.pill {
+  position: absolute; transform: translate(-50%, -50%);
+  background: var(--sticker); color: var(--sticker-ink);
+  border-radius: 8px; padding: 3px 9px 4px; text-align: center; white-space: nowrap;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5); line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  transition: left 180ms ease-out, top 180ms ease-out, opacity 250ms;
+}
+.pill b { display: block; font-weight: 900; letter-spacing: -0.01em; }
+.pill span { display: block; font-size: 11px; opacity: 0.75; }
+.pill.tent { opacity: 0.55; }
+.pill.excl::after { content: "+tax"; position: absolute; top: -8px; right: -8px; font-size: 9px; font-weight: 800; background: var(--hanko); color: #fff; border-radius: 4px; padding: 1px 4px; }
+@media (prefers-reduced-motion: reduce) { .pill { transition: none; } }
+
+/* Top bar */
+.top {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 3;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 18px max(16px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(to bottom, rgba(10,12,16,0.75), rgba(10,12,16,0));
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.brand { font-weight: 900; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+.brand i { font-style: normal; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--sticker); color: var(--sticker-ink); font-size: 14px; }
+.rate {
+  background: rgba(27,32,42,0.85); border: 1px solid var(--line); border-radius: 999px;
+  padding: 7px 12px; font-size: 14px; font-variant-numeric: tabular-nums; cursor: pointer;
+  display: flex; gap: 6px; align-items: baseline; min-width: 0;
+}
+.rate small { color: var(--muted); font-size: 12px; }
+
+/* Bottom controls */
+.bottom {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 3;
+  padding: 26px max(16px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(to top, rgba(10,12,16,0.85) 55%, rgba(10,12,16,0));
+  display: flex; flex-direction: column; gap: 12px; align-items: stretch;
+}
+.readout { text-align: center; min-height: 52px; }
+.readout .aud { font-size: 40px; font-weight: 900; color: var(--sticker); font-variant-numeric: tabular-nums; line-height: 1; }
+.readout .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; max-width: 420px; width: 100%; margin: 0 auto; }
+.round {
+  width: 54px; height: 54px; border-radius: 50%; border: 1px solid var(--line);
+  background: rgba(27,32,42,0.9); display: grid; place-items: center; cursor: pointer; justify-self: center;
+}
+.round[aria-pressed="true"] { background: var(--sticker); color: var(--sticker-ink); border-color: var(--sticker); }
+.shutter {
+  width: 74px; height: 74px; border-radius: 50%; border: 4px solid var(--text); background: transparent;
+  display: grid; place-items: center; cursor: pointer;
+}
+.shutter span { width: 54px; height: 54px; border-radius: 50%; background: var(--sticker); display: grid; place-items: center; color: var(--sticker-ink); }
+.shutter[aria-pressed="true"] span { border-radius: 14px; width: 40px; height: 40px; }
+.toast {
+  position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 2;
+  background: rgba(18,21,28,0.85); border: 1px solid var(--line); border-radius: 999px;
+  padding: 9px 16px; font-size: 14px; color: var(--text); white-space: nowrap; pointer-events: none;
+  max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Start screen and sheet */
+.screen {
+  position: fixed; inset: 0; z-index: 5; background: var(--ink); overflow-y: auto;
+  padding: calc(28px + env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-right, 0px)) calc(28px + env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px));
+  display: flex; flex-direction: column; justify-content: center; gap: 22px;
+}
+.screen .inner { max-width: 420px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 18px; }
+.screen h1 { margin: 0; font-size: 34px; font-weight: 900; display: flex; align-items: center; gap: 12px; }
+.screen h1 i { font-style: normal; display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--sticker); color: var(--sticker-ink); font-size: 22px; }
+.screen p { margin: 0; color: var(--muted); line-height: 1.5; }
+.btn {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 14px 18px;
+  font-weight: 800; cursor: pointer; text-align: center;
+}
+.btn.primary { background: var(--sticker); color: var(--sticker-ink); border-color: var(--sticker); font-size: 18px; }
+.msg { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; color: var(--text) !important; }
+.msg.err { border-color: var(--hanko); }
+
+.sheet-back { position: fixed; inset: 0; z-index: 6; background: rgba(0,0,0,0.55); }
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 7; background: var(--ink);
+  border-top-left-radius: 20px; border-top-right-radius: 20px; border-top: 1px solid var(--line);
+  padding: 18px max(20px, env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px));
+  max-height: 88vh; overflow-y: auto;
+}
+.sheet .inner { max-width: 460px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.label { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.field { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; }
+.field span { font-weight: 900; font-size: 26px; color: var(--muted); }
+.field input { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.field input:focus-visible { outline: none; }
+.field:focus-within { outline: 2px solid var(--sticker); outline-offset: 2px; }
+.big { font-size: 44px; font-weight: 900; color: var(--sticker); font-variant-numeric: tabular-nums; line-height: 1; overflow-wrap: anywhere; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.chipbtn { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 999px; padding: 6px 11px; font-size: 13px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.note { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 0; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.seg button { flex: 1; background: transparent; border: 0; padding: 9px 10px; cursor: pointer; color: var(--muted); font-weight: 700; }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--text); }
+</style>
+</head>
+<body>
+<video id="video" playsinline muted></video>
+<div id="overlay" aria-hidden="true"></div>
+<div class="toast" id="toast" hidden></div>
+
+<div class="top">
+  <div class="brand"><i aria-hidden="true">¥</i>Yen Lens</div>
+  <button class="rate" id="rateBtn" type="button"><span id="rateText">A$1 = ¥97.77</span><small id="rateAge"></small></button>
+</div>
+
+<div class="bottom">
+  <div class="readout" aria-live="polite">
+    <div class="aud" id="readAud">&nbsp;</div>
+    <div class="sub" id="readSub">Point at a price tag</div>
+  </div>
+  <div class="controls">
+    <button class="round" id="torchBtn" type="button" aria-pressed="false" aria-label="Torch" hidden>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 2h10l-2 6H9z"/><path d="M9 8v12a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V8"/><path d="M12 12v3"/></svg>
+    </button>
+    <span id="torchSpacer" aria-hidden="true"></span>
+    <button class="shutter" id="pauseBtn" type="button" aria-pressed="false" aria-label="Freeze">
+      <span><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" id="pauseIcon"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></span>
+    </button>
+    <button class="round" id="typeBtn" type="button" aria-label="Type a price">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h.01M11 9h.01M15 9h.01M7 13h.01M11 13h.01M15 13h.01M8 16h8"/></svg>
+    </button>
+  </div>
+</div>
+
+<section class="screen" id="startScreen">
+  <div class="inner">
+    <h1><i aria-hidden="true">¥</i>Yen Lens</h1>
+    <p>Point your camera at price tags in Japan and see them in Australian dollars, live. Reading happens on your phone, so it works without data once set up.</p>
+    <button class="btn primary" id="startBtn" type="button">Start camera</button>
+    <button class="btn" id="startTypeBtn" type="button">Type a price instead</button>
+    <p class="msg" id="startMsg" hidden></p>
+  </div>
+</section>
+
+<div class="sheet-back" id="sheetBack" hidden></div>
+<section class="sheet" id="sheet" hidden aria-label="Converter and rate">
+  <div class="inner">
+    <p class="label">Type a price</p>
+    <label class="field" for="yenInput"><span aria-hidden="true">¥</span><input id="yenInput" type="text" inputmode="numeric" placeholder="1,280" autocomplete="off" aria-label="Amount in yen"></label>
+    <div class="big" id="convOut">A$0.00</div>
+    <div class="row" id="quick"></div>
+
+    <p class="label" style="margin-top:8px">Exchange rate</p>
+    <div class="seg" role="group" aria-label="Rate source">
+      <button type="button" id="srcAuto" aria-pressed="true">Live rate</button>
+      <button type="button" id="srcManual" aria-pressed="false">My rate</button>
+    </div>
+    <div id="manualWrap" hidden>
+      <label class="field" for="rateInput"><span aria-hidden="true" style="font-size:18px">¥ per A$1</span><input id="rateInput" type="text" inputmode="decimal" autocomplete="off"></label>
+    </div>
+    <p class="note" id="rateNote"></p>
+    <button class="btn" id="closeSheet" type="button">Done</button>
+  </div>
+</section>
+
+<script src="prices.js"></script>
+<script src="vendor/tesseract.min.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  };
+
+  /* ---------------- exchange rate ---------------- */
+  const FALLBACK = { rate: 97.77, at: Date.parse("2026-10-30T03:00:00Z") };   // Wise mid-market, 30 Oct 2026
+  let live = store.get("yl.live") || FALLBACK;          // {rate, at}
+  let manual = store.get("yl.manual");                  // {rate} or null
+  let useManual = !!(store.get("yl.useManual") && manual && manual.rate > 0);
+  const rate = () => (useManual ? manual.rate : live.rate);
+  const fmtAUD = (y) => "A$" + (y / rate()).toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtYen = (y) => "¥" + Math.round(y).toLocaleString("en-AU");
+
+  function ageText(at) {
+    const d = Math.floor((Date.now() - at) / 86400000);
+    if (d <= 0) return "today";
+    if (d === 1) return "1 day old";
+    return d + " days old";
+  }
+  function renderRate() {
+    $("rateText").textContent = "A$1 = ¥" + rate().toLocaleString("en-AU", { maximumFractionDigits: 2 });
+    $("rateAge").textContent = useManual ? "yours" : ageText(live.at);
+    $("srcAuto").setAttribute("aria-pressed", String(!useManual));
+    $("srcManual").setAttribute("aria-pressed", String(useManual));
+    $("manualWrap").hidden = !useManual;
+    $("rateNote").textContent = useManual
+      ? "Using your rate. Handy if you want to match what your card actually charges."
+      : "Daily reference rate, fetched when you have data (last update " + new Date(live.at).toLocaleDateString("en-AU", { day: "numeric", month: "short" }) + "). Your card's rate will be slightly worse.";
+    renderConv(); renderQuick(); renderTracks(true);
+  }
+  async function fetchRate() {
+    const tries = [
+      ["https://api.frankfurter.dev/v2/rate/aud/jpy", (j) => j && j.rate],
+      ["https://api.frankfurter.dev/v1/latest?base=AUD&symbols=JPY", (j) => j && j.rates && j.rates.JPY],
+    ];
+    for (const [url, pick] of tries) {
+      try {
+        const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 6000);
+        const r = await fetch(url, { signal: ctl.signal, cache: "no-store" }); clearTimeout(t);
+        if (!r.ok) continue;
+        const v = Number(pick(await r.json()));
+        if (v > 10 && v < 1000) { live = { rate: v, at: Date.now() }; store.set("yl.live", live); renderRate(); return; }
+      } catch (e) {}
+    }
+  }
+  $("srcAuto").onclick = () => { useManual = false; store.set("yl.useManual", false); renderRate(); };
+  $("srcManual").onclick = () => {
+    if (!manual) manual = { rate: Math.round(live.rate * 100) / 100 };
+    useManual = true; store.set("yl.useManual", true); store.set("yl.manual", manual);
+    $("rateInput").value = String(manual.rate); renderRate(); $("rateInput").focus();
+  };
+  $("rateInput").addEventListener("input", () => {
+    const v = parseFloat($("rateInput").value.replace(/[^0-9.]/g, ""));
+    if (v > 10 && v < 1000) { manual = { rate: v }; store.set("yl.manual", manual); renderRate(); }
+  });
+
+  /* ---------------- converter sheet ---------------- */
+  const yenInput = $("yenInput");
+  function renderConv() {
+    const n = parseInt(yenInput.value.replace(/[^0-9]/g, ""), 10);
+    $("convOut").textContent = n > 0 ? fmtAUD(n) : "A$0.00";
+  }
+  yenInput.addEventListener("input", () => {
+    const d = yenInput.value.replace(/[^0-9]/g, "").slice(0, 9);
+    yenInput.value = d ? Number(d).toLocaleString("en-AU") : "";
+    renderConv();
+  });
+  function renderQuick() {
+    const q = $("quick"); q.innerHTML = "";
+    [500, 1000, 3000, 5000, 10000].forEach((y) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "chipbtn";
+      b.textContent = fmtYen(y) + " = " + fmtAUD(y);
+      b.onclick = () => { yenInput.value = y.toLocaleString("en-AU"); renderConv(); };
+      q.append(b);
+    });
+  }
+  function openSheet() {
+    $("sheet").hidden = false; $("sheetBack").hidden = false;
+    if (useManual && manual) $("rateInput").value = String(manual.rate);
+  }
+  function closeSheet() { $("sheet").hidden = true; $("sheetBack").hidden = true; }
+  $("rateBtn").onclick = openSheet; $("typeBtn").onclick = openSheet;
+  $("closeSheet").onclick = closeSheet; $("sheetBack").onclick = closeSheet;
+  $("startTypeBtn").onclick = () => { openSheet(); setTimeout(() => yenInput.focus(), 50); };
+
+  /* ---------------- toast ---------------- */
+  let toastTimer = 0;
+  function toast(text, ms) {
+    const t = $("toast");
+    clearTimeout(toastTimer);
+    if (!text) { t.hidden = true; return; }
+    t.textContent = text; t.hidden = false;
+    if (ms) toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+  }
+
+  /* ---------------- OCR workers ---------------- */
+  const base = new URL(".", location.href).href;
+  let workers = [];   // {w, psm, busy, n}
+  let ocrReady = null;
+  function ensureOCR() {
+    if (!ocrReady) ocrReady = initOCR().catch((e) => { ocrReady = null; throw e; });
+    return ocrReady;
+  }
+  async function initOCR() {
+    const opts = {
+      workerPath: base + "vendor/worker.min.js",
+      corePath: base + "vendor/core",
+      langPath: base + "lang",
+      workerBlobURL: false,
+      cacheMethod: "write",
+    };
+    const make = async (psm) => {
+      const w = await Tesseract.createWorker("jpn", 1, opts);
+      await w.setParameters({ tessedit_pageseg_mode: String(psm), preserve_interword_spaces: "0" });
+      return { w, psm, busy: false, n: 0 };
+    };
+    workers = [await make(6)];
+    make(11).then((x) => workers.push(x)).catch(() => {});   // second worker doubles the refresh rate
+  }
+
+  /* ---------------- camera ---------------- */
+  const video = $("video");
+  let stream = null, running = false, paused = false, wakeLock = null;
+
+  async function startCamera() {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    video.srcObject = stream;
+    await video.play();
+    const track = stream.getVideoTracks()[0];
+    try {
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      $("torchBtn").hidden = !caps.torch; $("torchSpacer").hidden = !!caps.torch;
+      if (caps.focusMode && caps.focusMode.includes("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+    } catch (e) {}
+    try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+  }
+  function stopCamera() {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    try { if (wakeLock) wakeLock.release(); } catch (e) {}
+    wakeLock = null;
+  }
+  $("torchBtn").onclick = async () => {
+    const t = stream && stream.getVideoTracks()[0]; if (!t) return;
+    const on = $("torchBtn").getAttribute("aria-pressed") !== "true";
+    try { await t.applyConstraints({ advanced: [{ torch: on }] }); $("torchBtn").setAttribute("aria-pressed", String(on)); } catch (e) {}
+  };
+
+  $("startBtn").onclick = async () => {
+    const msg = $("startMsg"); msg.hidden = true; msg.classList.remove("err");
+    $("startBtn").disabled = true; $("startBtn").textContent = "Starting…";
+    try {
+      await startCamera();
+    } catch (e) {
+      msg.hidden = false; msg.classList.add("err");
+      msg.textContent = e && e.name === "NotAllowedError"
+        ? "Camera access is blocked. In Chrome, tap the icon next to the address bar (or long-press the app icon, then App info) and allow Camera. Then tap Start camera again."
+        : "Couldn't open the camera. Close other apps using it and try again.";
+      $("startBtn").disabled = false; $("startBtn").textContent = "Start camera";
+      return;
+    }
+    $("startScreen").hidden = true;
+    store.set("yl.started", true);
+    running = true;
+    if (!workers.length) {
+      toast("Loading the price reader… first time takes a moment");
+      try { await ensureOCR(); }
+      catch (e) { toast("The price reader didn't load. Connect to data once and reopen the app."); return; }
+    }
+    toast("Point at a price tag", 2500);
+    pump();
+  };
+
+  $("pauseBtn").onclick = () => {
+    paused = !paused;
+    $("pauseBtn").setAttribute("aria-pressed", String(paused));
+    $("pauseBtn").setAttribute("aria-label", paused ? "Resume" : "Freeze");
+    $("pauseIcon").innerHTML = paused
+      ? '<path d="M7 5l12 7-12 7z"/>'
+      : '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>';
+    if (paused) { video.pause(); toast("Frozen. Tap to resume", 1800); }
+    else { video.play().catch(() => {}); pump(); }
+  };
+
+  document.addEventListener("visibilitychange", async () => {
+    if (document.hidden) { if (stream) stopCamera(); }
+    else if (running && !stream) {
+      try { await startCamera(); if (paused) video.pause(); pump(); } catch (e) { toast("Tap Start to reopen the camera."); }
+    }
+  });
+
+  /* ---------------- frame loop ---------------- */
+  const SCALES = [1100, 760];      // longest side of the frame sent to the reader, alternated
+  let lastDispatch = 0, pumpTimer = 0;
+
+  function pumpLater(ms) { if (!pumpTimer) pumpTimer = setTimeout(() => { pumpTimer = 0; pump(); }, ms); }
+
+  function grabFrame(maxDim) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const ew = window.innerWidth, eh = window.innerHeight;
+    if (!vw || !vh) return null;
+    const s = Math.max(ew / vw, eh / vh);
+    const sw = ew / s, sh = eh / s;                 // visible part of the video, in video pixels
+    const sx = (vw - sw) / 2, sy = (vh - sh) / 2;
+    const k = Math.min(1, maxDim / Math.max(sw, sh));
+    const c = document.createElement("canvas");
+    c.width = Math.round(sw * k); c.height = Math.round(sh * k);
+    const ctx = c.getContext("2d");
+    ctx.filter = "grayscale(1) contrast(1.25)";
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return { canvas: c, toScreen: ew / c.width };
+  }
+
+  function pump() {
+    if (!running || paused || !stream || document.hidden) return;
+    const free = workers.find((x) => !x.busy);
+    if (!free) return;
+    const now = performance.now();
+    if (now - lastDispatch < 120) { pumpLater(120 - (now - lastDispatch)); return; }
+    lastDispatch = now;
+    const frame = grabFrame(SCALES[free.n++ % SCALES.length]);
+    if (!frame) { pumpLater(200); return; }
+    free.busy = true;
+    frame.canvas.toBlob(async (blob) => {
+      try {
+        if (!blob) throw new Error("no frame");
+        const { data } = await free.w.recognize(blob, {}, { blocks: true, text: false });
+        if (!paused) ingest(YenPrices.find(data), frame.toScreen);
+      } catch (e) {
+        /* a bad frame is fine, the next one will do */
+      } finally {
+        free.busy = false;
+        pump();
+      }
+    }, "image/jpeg", 0.92);
+    pump();   // start the other worker too, if it is free
+  }
+
+  /* ---------------- tracking ---------------- */
+  let tracks = [], nextId = 1;
+  const SHOW_AFTER = 2, FORGET_MS = 1600;
+
+  function ingest(dets, f) {
+    const now = performance.now();
+    const used = new Set();
+    dets.forEach((d) => {
+      const cx = (d.x0 + d.x1) / 2 * f, cy = (d.y0 + d.y1) / 2 * f, h = (d.y1 - d.y0) * f, w = (d.x1 - d.x0) * f;
+      let best = null, bestD = Infinity;
+      tracks.forEach((t) => {
+        if (used.has(t)) return;
+        const dist = Math.hypot(t.x - cx, t.y - cy);
+        const lim = Math.max(70, t.h * 1.6, h * 1.6);
+        if (dist < lim && dist < bestD) { best = t; bestD = dist; }
+      });
+      if (!best) {
+        best = { id: nextId++, x: cx, y: cy, w, h, votes: {}, tax: d.tax, seen: 0, last: now, strong: d.strong, el: null };
+        tracks.push(best);
+      } else {
+        best.x += (cx - best.x) * 0.6; best.y += (cy - best.y) * 0.6;
+        best.w += (w - best.w) * 0.5; best.h += (h - best.h) * 0.5;
+        if (d.tax !== "unknown") best.tax = d.tax;
+        best.strong = best.strong || d.strong;
+      }
+      used.add(best);
+      best.votes[d.yen] = (best.votes[d.yen] || 0) + (d.strong ? 1.5 : 1) + Math.max(0, d.conf) / 100;
+      best.seen++; best.last = now;
+    });
+    tracks = tracks.filter((t) => {
+      if (now - t.last <= FORGET_MS) return true;
+      if (t.el) t.el.remove();
+      return false;
+    });
+    renderTracks(false);
+  }
+
+  function topYen(t) {
+    let y = 0, v = -1;
+    for (const k in t.votes) if (t.votes[k] > v) { v = t.votes[k]; y = Number(k); }
+    return y;
+  }
+
+  function renderTracks(force) {
+    const ov = $("overlay");
+    let lead = null;
+    tracks.forEach((t) => {
+      const show = t.seen >= SHOW_AFTER || (t.strong && t.seen >= 1 && Object.keys(t.votes).length === 1);
+      if (!show) { if (t.el) t.el.hidden = true; return; }
+      const yen = topYen(t);
+      if (!t.el) {
+        t.el = document.createElement("div");
+        t.el.className = "pill";
+        t.el.innerHTML = "<b></b><span></span>";
+        ov.append(t.el);
+      }
+      t.el.hidden = false;
+      const fs = Math.max(15, Math.min(30, t.h * 0.75));
+      t.el.querySelector("b").style.fontSize = fs + "px";
+      t.el.querySelector("b").textContent = fmtAUD(yen);
+      t.el.querySelector("span").textContent = fmtYen(yen);
+      t.el.classList.toggle("excl", t.tax === "excl");
+      t.el.classList.toggle("tent", t.seen < SHOW_AFTER);
+      const half = (t.el.offsetWidth || 90) / 2;
+      t.el.style.left = Math.max(half + 6, Math.min(window.innerWidth - half - 6, t.x)) + "px";
+      t.el.style.top = t.y + "px";
+      if (!lead || t.h > lead.h) lead = t;
+    });
+    if (lead) {
+      const y = topYen(lead);
+      $("readAud").textContent = fmtAUD(y);
+      $("readSub").textContent = fmtYen(y) + (lead.tax === "incl" ? " · tax included" : lead.tax === "excl" ? " · before tax, add 8 to 10%" : "");
+      toast("");
+    } else if (!force) {
+      $("readAud").innerHTML = "&nbsp;";
+      $("readSub").textContent = paused ? "Frozen" : "Point at a price tag";
+    }
+  }
+  window.addEventListener("resize", () => { tracks.forEach((t) => t.el && t.el.remove()); tracks = []; });
+
+  /* ---------------- boot ---------------- */
+  renderRate();
+  if (navigator.onLine !== false) fetchRate();
+  window.addEventListener("online", fetchRate);
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    $("startBtn").disabled = true;
+    const m = $("startMsg"); m.hidden = false; m.classList.add("err");
+    m.textContent = "This browser can't use the camera here. Open the app's https:// address in Chrome.";
+  }
+  // Warm up the reader while the start screen is showing, so the camera view is ready faster.
+  ensureOCR().catch(() => {});
+})();
+</script>
+</body>
+</html>
